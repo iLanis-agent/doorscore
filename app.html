@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DoorScore - eight viewings blur together. score them the same day.</title>
+<style>
+  :root { --bg:#11151a; --panel:#171d24; --line:#2a3540; --text:#f1f5f9; --dim:#98a6b3; --accent:#f5b85c; --good:#8be0a4; --warn:#ffcf7a; --bad:#ff8f7a; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:26px 14px 44px; }
+  h1 { font-size:30px; }
+  .sub { color:var(--dim); margin:6px 0 18px; font-size:14px; text-align:center; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px 18px; width:min(640px, 94vw); margin-bottom:14px; }
+  .card h2 { font-size:15px; margin-bottom:10px; }
+  .row { display:flex; gap:10px; align-items:end; flex-wrap:wrap; }
+  input, select { background:#0c1015; border:1px solid var(--line); border-radius:8px; color:var(--text); padding:8px 10px; font-size:13px; }
+  label { color:var(--dim); font-size:11px; display:block; margin-bottom:4px; }
+  button { background:var(--accent); color:#11151a; border:none; border-radius:8px; padding:9px 16px; font-size:13px; font-weight:700; cursor:pointer; }
+  .crit { display:grid; grid-template-columns:1fr 90px 30px; gap:8px; align-items:center; margin-top:6px; }
+  .crit .nm { font-size:14px; }
+  .crit .x { color:var(--dim); cursor:pointer; text-align:center; }
+  .crit .x:hover { color:var(--bad); }
+  .apt { background:#0c1015; border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-top:8px; }
+  .apt .top { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+  .apt .nm { font-weight:700; }
+  .score-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(100px, 1fr)); gap:8px; margin-top:10px; }
+  .score-grid label { font-size:10px; }
+  .rankrow { display:flex; align-items:center; gap:10px; background:#0c1015; border:1px solid var(--line); border-radius:10px; padding:10px 14px; margin-top:6px; }
+  .rankrow .pos { font-size:18px; font-weight:900; color:var(--dim); min-width:28px; }
+  .rankrow .info { flex:1; }
+  .rankrow .info .nm { font-weight:700; font-size:14px; }
+  .rankrow .info .flags { color:var(--bad); font-size:12px; margin-top:2px; }
+  .rankrow .sc { font-size:20px; font-weight:900; }
+  .vchip { font-size:11px; font-weight:700; padding:2px 10px; border-radius:20px; }
+  .v-contender { background:var(--good); color:#11151a; }
+  .v-maybe { background:var(--accent); color:#11151a; }
+  .v-backup { background:#4a5563; color:var(--text); }
+  .v-pass { background:#3a3f47; color:var(--dim); }
+  .v-flagged { background:var(--bad); color:#11151a; }
+  .v-unscored { background:#3a3f47; color:var(--dim); }
+  .del { background:none; border:none; color:var(--dim); cursor:pointer; font-size:12px; margin-top:6px; padding:0; }
+  .del:hover { color:var(--bad); }
+  .empty { color:var(--dim); text-align:center; padding:10px 0; font-size:14px; }
+  .foot { margin-top:14px; color:var(--dim); font-size:13px; }
+  a { color:var(--accent); text-decoration:none; }
+</style>
+</head>
+<body>
+<h1>DoorScore</h1>
+<div class="sub">the fifth apartment feels amazing because it's the fifth. score each one the same day, on the same criteria.</div>
+
+<div class="card">
+  <h2>Your criteria (weight 1-5)</h2>
+  <div id="criteria"></div>
+  <div class="row" style="margin-top:10px">
+    <div><label>New criterion</label><input id="c-name" placeholder="e.g. Balcony"></div>
+    <div><label>Weight</label><select id="c-weight"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
+    <button id="add-crit">Add</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Add a viewing</h2>
+  <div class="row">
+    <div><label>Apartment</label><input id="a-name" placeholder="e.g. Dizengoff 2BR"></div>
+    <button id="add-apt">Score it</button>
+  </div>
+  <div id="apts"></div>
+</div>
+
+<div class="card">
+  <h2>Leaderboard</h2>
+  <div id="board"><div class="empty">Score at least one viewing.</div></div>
+</div>
+
+<div class="foot"><a href="index.html">&larr; about</a></div>
+
+<script src="engine.js?v=1"></script>
+<script>
+(function () {
+  var KEY = 'doorscore-v1';
+  var DEFAULT_CRITERIA = [
+    { id: 'price', name: 'Price', weight: 5 },
+    { id: 'commute', name: 'Commute', weight: 4 },
+    { id: 'space', name: 'Space', weight: 4 },
+    { id: 'light', name: 'Light', weight: 3 },
+    { id: 'noise', name: 'Noise', weight: 2 },
+    { id: 'vibe', name: 'Vibe', weight: 3 }
+  ];
+  var state = { criteria: DEFAULT_CRITERIA.slice(), apartments: [] }; // apt: {id, name, scores:{}}
+
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+  function load() {
+    try {
+      var s = JSON.parse(localStorage.getItem(KEY));
+      if (s && Array.isArray(s.criteria) && s.criteria.length) state = s;
+    } catch (e) {}
+  }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+  function renderCriteria() {
+    var el = document.getElementById('criteria');
+    el.innerHTML = '';
+    state.criteria.forEach(function (c) {
+      var row = document.createElement('div');
+      row.className = 'crit';
+      row.innerHTML = '<span class="nm">' + esc(c.name) + '</span>' +
+        '<select data-id="' + c.id + '">' + [1,2,3,4,5].map(function (w) { return '<option' + (w === c.weight ? ' selected' : '') + '>' + w + '</option>'; }).join('') + '</select>' +
+        '<span class="x" data-id="' + c.id + '">&times;</span>';
+      el.appendChild(row);
+    });
+    el.querySelectorAll('select').forEach(function (s) {
+      s.addEventListener('change', function () {
+        var c = state.criteria.filter(function (x) { return x.id === s.getAttribute('data-id'); })[0];
+        c.weight = +s.value;
+        save(); renderAll();
+      });
+    });
+    el.querySelectorAll('.x').forEach(function (x) {
+      x.addEventListener('click', function () {
+        state.criteria = state.criteria.filter(function (c) { return c.id !== x.getAttribute('data-id'); });
+        save(); renderAll();
+      });
+    });
+  }
+
+  function renderApartments() {
+    var el = document.getElementById('apts');
+    el.innerHTML = '';
+    state.apartments.forEach(function (a) {
+      var div = document.createElement('div');
+      div.className = 'apt';
+      var html = '<div class="top"><span class="nm">' + esc(a.name) + '</span></div><div class="score-grid">';
+      state.criteria.forEach(function (c) {
+        html += '<div><label>' + esc(c.name) + ' (1-10)</label><select data-apt="' + a.id + '" data-crit="' + c.id + '">' +
+          '<option value="">-</option>' +
+          [1,2,3,4,5,6,7,8,9,10].map(function (s) { return '<option' + (a.scores[c.id] === s ? ' selected' : '') + '>' + s + '</option>'; }).join('') +
+          '</select></div>';
+      });
+      html += '</div><button class="del" data-id="' + a.id + '">remove viewing</button>';
+      div.innerHTML = html;
+      el.appendChild(div);
+    });
+    el.querySelectorAll('select[data-apt]').forEach(function (s) {
+      s.addEventListener('change', function () {
+        var a = state.apartments.filter(function (x) { return x.id === s.getAttribute('data-apt'); })[0];
+        var v = s.value === '' ? null : +s.value;
+        if (v === null) delete a.scores[s.getAttribute('data-crit')];
+        else a.scores[s.getAttribute('data-crit')] = v;
+        save(); renderBoard();
+      });
+    });
+    el.querySelectorAll('.del').forEach(function (b) {
+      b.addEventListener('click', function () {
+        state.apartments = state.apartments.filter(function (a) { return a.id !== b.getAttribute('data-id'); });
+        save(); renderAll();
+      });
+    });
+  }
+
+  function renderBoard() {
+    var el = document.getElementById('board');
+    if (!state.apartments.length) { el.innerHTML = '<div class="empty">Score at least one viewing.</div>'; return; }
+    var ranked = DoorScore.rank(state.criteria, state.apartments, 3);
+    el.innerHTML = '';
+    ranked.forEach(function (r, i) {
+      var row = document.createElement('div');
+      row.className = 'rankrow';
+      row.innerHTML = '<span class="pos">' + (i + 1) + '</span>' +
+        '<span class="info"><span class="nm">' + esc(r.name) + '</span>' +
+        (r.breakers.length ? '<div class="flags">deal-breaker: ' + r.breakers.map(esc).join(', ') + ' scored 3 or less</div>' : '') +
+        '</span>' +
+        '<span class="vchip v-' + r.verdict + '">' + r.verdict + '</span>' +
+        '<span class="sc">' + (r.score === null ? '-' : r.score) + '</span>';
+      el.appendChild(row);
+    });
+  }
+
+  function renderAll() { renderCriteria(); renderApartments(); renderBoard(); }
+
+  document.getElementById('add-crit').addEventListener('click', function () {
+    var name = document.getElementById('c-name').value.trim();
+    if (!name) return;
+    state.criteria.push({ id: 'c' + Date.now(), name: name, weight: +document.getElementById('c-weight').value });
+    document.getElementById('c-name').value = '';
+    save(); renderAll();
+  });
+  document.getElementById('add-apt').addEventListener('click', function () {
+    var name = document.getElementById('a-name').value.trim();
+    if (!name) return;
+    state.apartments.push({ id: 'a' + Date.now(), name: name, scores: {} });
+    document.getElementById('a-name').value = '';
+    save(); renderAll();
+  });
+
+  // test hook
+  window.__ds = {
+    clear: function () { state = { criteria: DEFAULT_CRITERIA.slice(), apartments: [] }; save(); renderAll(); },
+    addApt: function (name, scores) {
+      var ids = {};
+      state.criteria.forEach(function (c) { ids[c.name] = c.id; });
+      var s = {};
+      Object.keys(scores).forEach(function (k) { if (ids[k]) s[ids[k]] = scores[k]; });
+      state.apartments.push({ id: 'a' + Math.random(), name: name, scores: s });
+      save(); renderAll();
+    },
+    read: function () {
+      return {
+        board: Array.prototype.map.call(document.querySelectorAll('#board .rankrow'), function (d) { return d.textContent; }),
+        names: Array.prototype.map.call(document.querySelectorAll('#board .rankrow .nm'), function (d) { return d.textContent; }),
+        chips: Array.prototype.map.call(document.querySelectorAll('#board .vchip'), function (d) { return d.textContent; })
+      };
+    }
+  };
+
+  load();
+  renderAll();
+})();
+</script>
+</body>
+</html>
